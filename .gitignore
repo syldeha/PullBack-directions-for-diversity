@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environments and local settings
+.env
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Experiment artifacts
+outputs/
+wandb/
+data/
+cache/
+checkpoints/
+
+# Model weights and downloaded archives
+*.bin
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.tar
+*.tar.gz
+*.tar.zst
+*.zip
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+
