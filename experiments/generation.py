@@ -1185,7 +1185,7 @@ def main(check_only=False):
                     NUMBER_OF_PARTICLES,
                 )
             ]
-            directions = rs.make_full_scale_directions(
+            full_scale_directions = rs.make_full_scale_directions(
                 basis=basis,
                 positive_condition=positive,
                 number_of_real_tokens=number_of_real_tokens,
@@ -1202,7 +1202,7 @@ def main(check_only=False):
                     positive_condition=positive,
                     negative_condition=negative,
                     number_of_real_tokens=number_of_real_tokens,
-                    full_scale_directions=directions,
+                    full_scale_directions=full_scale_directions,
                     candidate_rhos=probe_rhos,
                     guidance_scale=GUIDANCE_SCALE,
                     schedule_start=PULLBACK_START,
@@ -1360,7 +1360,7 @@ def main(check_only=False):
                 f"sample={sampling_seconds:.2f}s "
                 f"basis_est={basis_direct_seconds:.2f}s"
             )
-            del latents, probe, basis, directions
+            del latents, probe, basis, full_scale_directions
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
