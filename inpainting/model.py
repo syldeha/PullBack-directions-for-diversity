@@ -570,16 +570,36 @@ def ddim_step_two_branches(
 
 
 def decode_latents(pipe, latents):
+    """Decode a latent batch into PIL images.
+
+    Some VAEs (e.g. the stock SDXL base VAE) overflow to NaN when run in
+    fp16 and set config.force_upcast=True to signal that they need fp32 to
+    decode correctly -- mirrors diffusers' own SDXL pipeline handling.
+    """
+
+    needs_upcasting = (
+        pipe.vae.dtype == torch.float16 and pipe.vae.config.force_upcast
+    )
+    if needs_upcasting:
+        pipe.vae.to(dtype=torch.float32)
+
     images = []
     with torch.no_grad():
         for particle in range(latents.shape[0]):
+            particle_latents = latents[particle:particle + 1]
+            if needs_upcasting:
+                particle_latents = particle_latents.float()
             decoded = pipe.vae.decode(
-                latents[particle:particle + 1] / pipe.vae.config.scaling_factor,
+                particle_latents / pipe.vae.config.scaling_factor,
                 return_dict=False,
             )[0]
             images.extend(
                 pipe.image_processor.postprocess(decoded, output_type="pil")
             )
+
+    if needs_upcasting:
+        pipe.vae.to(dtype=MODEL_DTYPE)
+
     torch.cuda.empty_cache()
     return images
 

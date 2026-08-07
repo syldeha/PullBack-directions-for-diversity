@@ -24,10 +24,11 @@ PULLBACK_POWER_ITERATIONS = [2]
 # A maximum-rank basis is truncated so lower ranks are exact nested subspaces.
 USE_NESTED_BASES = True
 
-MODEL_ID = "stable-diffusion-v1-5/stable-diffusion-v1-5"
+MODEL_FAMILY = "sdxl"
+MODEL_ID = str(Path.home() / "BrushNet" / "checkpoints" / "stable-diffusion-xl-base-1.0")
 NEGATIVE_PROMPT = ""
-HEIGHT = 512
-WIDTH = 512
+HEIGHT = 1024
+WIDTH = 1024
 NUMBER_OF_DDIM_STEPS = 50
 GUIDANCE_SCALE = 7.5
 ETA = 0.0
@@ -58,14 +59,14 @@ PULLBACK_TRANSITION_STEPS = 1
 # CLIP-constrained, DINO-diversity rho-star selection. Zero is decoded as the
 # clean reference but cannot be selected.
 PROBE_TIMESTEP = 699
-CANDIDATE_RHOS = [0.10, 0.125, 0.15, 0.175, 0.20, 0.25]
+# CANDIDATE_RHOS = [0.10, 0.125, 0.15, 0.175, 0.20, 0.25]
+CANDIDATE_RHOS = [1.0,1.25,1.5,1.75,2.0,2.5,3.0]
 MAX_CLIP_DROP = 0.35
 PROBE_DECODE_BATCH_SIZE = 4
 SEARCH_STRATEGY = "beam"
 MAX_SEARCH_COMBINATIONS = 5_000_000
 SEARCH_BEAM_WIDTH = 4096
 CONSTRAINT_FALLBACK = "minimum_selectable"
-
 # Original CADS control used by the comparison.
 CADS_START = 900
 CADS_END = 600
@@ -92,7 +93,7 @@ TPSO_LOG_EVERY = 10
 
 # Keep RUN_NAME unchanged to resume. Change it whenever any configuration
 # value changes.
-RUN_NAME = "rho_star_rank_iteration_ablation_coco20_vtpso_final"
+RUN_NAME = "rho_star_rank_iteration_ablation_coco20_vtpso_final_sdxl"
 OUTPUT_ROOT = ROOT / "outputs" / RUN_NAME
 BASIS_CACHE = OUTPUT_ROOT / "basis_cache"
 JPEG_QUALITY = 92

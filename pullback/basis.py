@@ -31,10 +31,20 @@ def positive_noise_map(
         number_of_real_tokens,
     )
     model_input = model.scheduler.scale_model_input(latent, timestep)
+    unet_kwargs = {}
+    if model.model_family == "sdxl":
+        batch_size = full_condition.shape[0]
+        unet_kwargs["added_cond_kwargs"] = {
+            "text_embeds": model.repeat_condition(
+                model.pooled_positive, batch_size
+            ),
+            "time_ids": model.add_time_ids_tensor.repeat(batch_size, 1),
+        }
     return model.unet(
         model_input,
         timestep,
         encoder_hidden_states=full_condition,
+        **unet_kwargs,
     ).sample
 
 

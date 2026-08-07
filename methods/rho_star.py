@@ -15,6 +15,7 @@ def predict_single_condition_branch(
     latents: torch.Tensor,
     timestep: torch.Tensor,
     conditions: torch.Tensor,
+    pooled_condition: torch.Tensor | None = None,
 ):
     """Run one U-Net condition branch with the configured microbatch size."""
 
@@ -22,17 +23,27 @@ def predict_single_condition_branch(
         raise ValueError("Each latent must have one matching condition")
     batch_size = latents.shape[0]
     microbatch = model.unet_particle_batch_size or batch_size
+    if model.model_family == "sdxl":
+        pooled_full = model.repeat_condition(pooled_condition, batch_size)
+        time_ids_full = model.add_time_ids_tensor.repeat(batch_size, 1)
     predictions = []
     for first in range(0, batch_size, microbatch):
         last = min(first + microbatch, batch_size)
         model_input = model.scheduler.scale_model_input(
             latents[first:last], timestep
         )
+        unet_kwargs = {}
+        if model.model_family == "sdxl":
+            unet_kwargs["added_cond_kwargs"] = {
+                "text_embeds": pooled_full[first:last],
+                "time_ids": time_ids_full[first:last],
+            }
         with torch.no_grad():
             prediction = model.unet(
                 model_input,
                 timestep,
                 encoder_hidden_states=conditions[first:last],
+                **unet_kwargs,
             ).sample
         predictions.append(prediction)
     return torch.cat(predictions, dim=0)
@@ -159,10 +170,12 @@ def probe_rho_candidates(
     )
 
     epsilon_negative = predict_single_condition_branch(
-        latents, timestep, base_negative
+        latents, timestep, base_negative,
+        pooled_condition=model.pooled_negative,
     ).float()
     epsilon_positive = predict_single_condition_branch(
-        candidate_latents, timestep, candidate_conditions
+        candidate_latents, timestep, candidate_conditions,
+        pooled_condition=model.pooled_positive,
     ).float().reshape(
         number_of_particles,
         number_of_candidates,

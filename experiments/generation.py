@@ -93,6 +93,7 @@ def configuration():
         "pullback_ranks": PULLBACK_RANKS,
         "pullback_power_iterations": PULLBACK_POWER_ITERATIONS,
         "use_nested_bases": USE_NESTED_BASES,
+        "model_family": MODEL_FAMILY,
         "model_id": MODEL_ID,
         "negative_prompt": NEGATIVE_PROMPT,
         "height": HEIGHT,
@@ -786,7 +787,7 @@ def main(check_only=False):
             f"run={RUN_NAME} captions={len(manifest)} "
             f"particles={NUMBER_OF_PARTICLES} methods={method_names()}"
         )
-        print("model:", MODEL_ID)
+        print("model:", MODEL_FAMILY, MODEL_ID)
         print("manifest:", coco_cfg.MANIFEST_PATH)
         print("output:", OUTPUT_ROOT)
         print("configuration is valid; model weights were not loaded")
@@ -826,7 +827,7 @@ def main(check_only=False):
         f"particles={NUMBER_OF_PARTICLES} ranks={PULLBACK_RANKS} "
         f"iterations={PULLBACK_POWER_ITERATIONS}"
     )
-    model.load_model(MODEL_ID, local_files_only=LOCAL_FILES_ONLY)
+    model.load_model(MODEL_ID, family=MODEL_FAMILY, local_files_only=LOCAL_FILES_ONLY)
     model.set_unet_particle_batch_size(UNET_PARTICLE_BATCH_SIZE)
     metrics_calculator = PromptMetrics()
     wandb_run = initialize_wandb()
