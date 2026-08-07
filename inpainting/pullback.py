@@ -28,9 +28,12 @@ def conditional_noise(pipe, anchor_latent, condition, timestep, sample):
     count = anchor_latent.shape[0]
     model_input = pipe.scheduler.scale_model_input(anchor_latent, timestep)
     brushnet_condition = sample.brushnet_condition.repeat(count, 1, 1, 1)
-    pooled = sample.pooled.repeat(count, 1)
-    time_ids = sample.add_time_ids.repeat(count, 1)
-    added = {"text_embeds": pooled, "time_ids": time_ids}
+    if sample.pooled is None:
+        added = None
+    else:
+        pooled = sample.pooled.repeat(count, 1)
+        time_ids = sample.add_time_ids.repeat(count, 1)
+        added = {"text_embeds": pooled, "time_ids": time_ids}
     down, middle, up = pipe.brushnet(
         model_input,
         timestep,
@@ -530,6 +533,14 @@ def run_adaptive(
     if not 0 <= anchor_particle < count:
         raise ValueError("anchor_particle is outside the particle batch")
 
+    rho_values = torch.as_tensor(rho, dtype=torch.float32).flatten()
+    if rho_values.numel() == 1:
+        rho_values = rho_values.repeat(count)
+    if rho_values.numel() != count:
+        raise ValueError("rho must be a scalar or one value per particle")
+    if not torch.isfinite(rho_values).all() or (rho_values < 0).any():
+        raise ValueError("rho values must be finite and non-negative")
+
     fixed_noise = make_fixed_prompt_noise(
         pipe,
         sample,
@@ -627,9 +638,10 @@ def run_adaptive(
         if alpha <= 0.0:
             condition = clean
         else:
+            scales = rho_values.to(active_directions.device).view(-1, 1, 1)
             displacement = active_directions * (
-                float(rho) * token_norms
-            ).view(1, -1, 1)
+                scales * token_norms.view(1, -1, 1)
+            )
             condition_float = clean_float.clone()
             condition_float[:, :sample.real_token_count, :] += (
                 alpha * displacement

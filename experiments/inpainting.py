@@ -41,7 +41,13 @@ from evaluation.inpainting_metrics import InpaintingMetrics
 from inpainting import data, experiment, model, tpso
 
 
-METHODS = ("clean_ddim", "cads", "adaptive_pullback", "tpso")
+METHODS = (
+    "clean_ddim",
+    "cads",
+    "adaptive_pullback",
+    "rho_star_pullback",
+    "tpso",
+)
 SCALAR_METRICS = (
     "lpips_mean",
     "lpips_min",
@@ -132,7 +138,7 @@ def validate_config(config_module, keys):
     unknown = sorted(set(selected) - set(METHODS))
     if unknown:
         raise ValueError(f"Unknown methods: {unknown}; choose from {METHODS}")
-    if "adaptive_pullback" in selected:
+    if {"adaptive_pullback", "rho_star_pullback"} & set(selected):
         n = config_module.EXPERIMENT.num_particles
         if config_module.EXPERIMENT.pullback_rank < n:
             raise ValueError("pullback_rank must be at least num_particles")
@@ -246,7 +252,7 @@ def evaluate_images(metrics, blended, raw, prep, config_module):
     return values
 
 
-def run_method(method, pipe, prep, config, cache_dir, progress):
+def run_method(method, pipe, prep, config, cache_dir, metrics, progress):
     details = {}
     history = None
     started = time.perf_counter()
@@ -276,6 +282,25 @@ def run_method(method, pipe, prep, config, cache_dir, progress):
             "sampling_seconds": time.perf_counter() - sample_started,
             "pullback_eigenvalues": eigenvalues,
         }
+
+    elif method == "rho_star_pullback":
+        basis_started = time.perf_counter()
+        basis, eigenvalues = experiment.compute_initial_basis(
+            pipe, prep, config, cache_dir=cache_dir
+        )
+        basis_seconds = time.perf_counter() - basis_started
+        raw, blended, details = experiment.run_rho_star_pullback(
+            pipe,
+            prep,
+            basis,
+            config,
+            metrics,
+            progress=progress,
+        )
+        details.update({
+            "basis_seconds": basis_seconds,
+            "pullback_eigenvalues": eigenvalues,
+        })
 
     elif method == "tpso":
         verification = tpso.verify_clean_encoding(pipe, prep)
@@ -424,6 +449,8 @@ def print_aggregate(summary):
         "dino_sim_mean_mean",
         "mask_dino_sim_mean_mean",
         "lpips_mean_mean",
+        "mss_mean",
+        "mask_mss_mean",
         "vendi_mean",
         "seconds_mean",
     ]
@@ -631,6 +658,7 @@ def main():
                         prep,
                         config_module.EXPERIMENT,
                         cache_dir,
+                        metrics,
                         config_module.SHOW_SAMPLER_PROGRESS,
                     )
                     metric_values = evaluate_images(

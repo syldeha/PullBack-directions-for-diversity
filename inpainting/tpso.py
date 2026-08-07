@@ -1,4 +1,4 @@
-"""TPSO token-prompt optimization for the BrushNet SDXL pipeline."""
+"""TPSO token-prompt optimization for SD1.5 and SDXL BrushNet."""
 
 from dataclasses import dataclass, replace
 import time
@@ -13,14 +13,14 @@ from inpainting import model
 @dataclass
 class EncodedPrompt:
     prompt_embeds: torch.Tensor
-    pooled_embeds: torch.Tensor
+    pooled_embeds: torch.Tensor | None
     global_representation: torch.Tensor
 
 
 @dataclass
 class TPSOResult:
     prompt_embeds: torch.Tensor
-    pooled_embeds: torch.Tensor
+    pooled_embeds: torch.Tensor | None
     history: list
     offset_norms: list
     steps_run: int
@@ -77,12 +77,21 @@ def prompt_representation(output):
     return output.pooler_output
 
 
-def encode_sdxl_prompt(pipe, prompt, batch_size=1, offsets=None):
-    """Encode clean or offset prompts through both frozen SDXL encoders."""
-    tokenizers = (pipe.tokenizer, pipe.tokenizer_2)
-    text_encoders = (pipe.text_encoder, pipe.text_encoder_2)
+def text_components(pipe):
+    """Return the one SD1.5 or two SDXL tokenizer/encoder pairs."""
+    tokenizers = [pipe.tokenizer]
+    text_encoders = [pipe.text_encoder]
+    if hasattr(pipe, "tokenizer_2") and hasattr(pipe, "text_encoder_2"):
+        tokenizers.append(pipe.tokenizer_2)
+        text_encoders.append(pipe.text_encoder_2)
+    return tuple(tokenizers), tuple(text_encoders)
+
+
+def encode_prompt_with_offsets(pipe, prompt, batch_size=1, offsets=None):
+    """Encode a clean or offset prompt with the configured text encoders."""
+    tokenizers, text_encoders = text_components(pipe)
     if offsets is not None and len(offsets) != len(text_encoders):
-        raise ValueError("SDXL TPSO expects one offset per text encoder")
+        raise ValueError("TPSO expects one offset per text encoder")
 
     sequence_parts = []
     global_parts = []
@@ -109,11 +118,16 @@ def encode_sdxl_prompt(pipe, prompt, batch_size=1, offsets=None):
                 offsets[encoder_index],
                 content_mask,
             )
-        sequence_parts.append(output.hidden_states[-2])
+        if len(text_encoders) == 1:
+            # SD1.5 conditions the U-Net on the final CLIP hidden state.
+            sequence_parts.append(output.last_hidden_state)
+        else:
+            # SDXL follows the pipeline convention and uses the penultimate state.
+            sequence_parts.append(output.hidden_states[-2])
         global_parts.append(
             F.normalize(prompt_representation(output).float(), dim=-1)
         )
-        if encoder_index == len(text_encoders) - 1:
+        if len(text_encoders) > 1 and encoder_index == len(text_encoders) - 1:
             pooled_sdxl = output.text_embeds
 
     prompt_embeds = torch.cat(sequence_parts, dim=-1)
@@ -129,14 +143,12 @@ def encode_sdxl_prompt(pipe, prompt, batch_size=1, offsets=None):
 
 
 def make_offsets(pipe, prompt, num_particles, initial_std, seed):
-    """Create one learnable token-offset tensor for each SDXL encoder."""
+    """Create one learnable token-offset tensor for each text encoder."""
     generator = model.make_generator(pipe._execution_device, seed)
     offsets = []
     masks = []
-    for tokenizer, text_encoder in zip(
-        (pipe.tokenizer, pipe.tokenizer_2),
-        (pipe.text_encoder, pipe.text_encoder_2),
-    ):
+    tokenizers, text_encoders = text_components(pipe)
+    for tokenizer, text_encoder in zip(tokenizers, text_encoders):
         input_ids, content_mask = prompt_inputs(
             pipe,
             tokenizer,
@@ -181,13 +193,14 @@ def optimize(
     if sigma < 0 or max_steps <= 0:
         raise ValueError("sigma and max_steps are invalid")
 
-    for text_encoder in (pipe.text_encoder, pipe.text_encoder_2):
+    _, text_encoders = text_components(pipe)
+    for text_encoder in text_encoders:
         text_encoder.eval()
         for parameter in text_encoder.parameters():
             parameter.requires_grad_(False)
 
     with torch.no_grad():
-        clean = encode_sdxl_prompt(pipe, prompt, batch_size=1)
+        clean = encode_prompt_with_offsets(pipe, prompt, batch_size=1)
         clean_representation = clean.global_representation.repeat(count, 1)
 
     offsets, content_masks = make_offsets(
@@ -210,7 +223,7 @@ def optimize(
     started = time.perf_counter()
     for step in range(int(max_steps)):
         optimizer.zero_grad(set_to_none=True)
-        variant = encode_sdxl_prompt(
+        variant = encode_prompt_with_offsets(
             pipe,
             prompt,
             batch_size=count,
@@ -271,7 +284,7 @@ def optimize(
 
     optimization_seconds = time.perf_counter() - started
     with torch.no_grad():
-        optimized = encode_sdxl_prompt(
+        optimized = encode_prompt_with_offsets(
             pipe,
             prompt,
             batch_size=count,
@@ -284,7 +297,11 @@ def optimize(
 
     return TPSOResult(
         prompt_embeds=optimized.prompt_embeds.detach(),
-        pooled_embeds=optimized.pooled_embeds.detach(),
+        pooled_embeds=(
+            optimized.pooled_embeds.detach()
+            if optimized.pooled_embeds is not None
+            else None
+        ),
         history=history,
         offset_norms=offset_norms,
         steps_run=len(history),
@@ -295,21 +312,27 @@ def optimize(
 def verify_clean_encoding(pipe, sample):
     """Check that zero-offset encoding matches BrushNet prompt encoding."""
     with torch.no_grad():
-        clean = encode_sdxl_prompt(pipe, sample.caption, batch_size=1)
-    return {
+        clean = encode_prompt_with_offsets(pipe, sample.caption, batch_size=1)
+    verification = {
         "prompt_embed_max_error": float(
             (
                 clean.prompt_embeds.to(sample.prompt_embed.dtype)
                 - sample.prompt_embed
             ).abs().max()
         ),
-        "pooled_embed_max_error": float(
+    }
+    if clean.pooled_embeds is None and sample.pooled is None:
+        verification["pooled_embed_max_error"] = 0.0
+    elif clean.pooled_embeds is None or sample.pooled is None:
+        verification["pooled_embed_max_error"] = float("inf")
+    else:
+        verification["pooled_embed_max_error"] = float(
             (
                 clean.pooled_embeds.to(sample.pooled.dtype)
                 - sample.pooled
             ).abs().max()
-        ),
-    }
+        )
+    return verification
 
 
 def alpha_schedule(timestep, scheduler, ratio):
@@ -335,11 +358,10 @@ def predict_noise(
 ):
     predictions = []
     for particle in range(latents.shape[0]):
-        particle_sample = replace(
-            sample,
-            prompt_embed=prompt_embeds[particle:particle + 1],
-            pooled=pooled_embeds[particle:particle + 1],
-        )
+        changes = {"prompt_embed": prompt_embeds[particle:particle + 1]}
+        if pooled_embeds is not None:
+            changes["pooled"] = pooled_embeds[particle:particle + 1]
+        particle_sample = replace(sample, **changes)
         model_input, prompt, added, down, middle, up = model.brushnet_forward(
             pipe,
             latents[particle:particle + 1],
@@ -414,14 +436,20 @@ def run(
 ):
     """Run BrushNet DDIM with TPSO positive conditions and a clean negative."""
     count = int(num_particles)
-    if (
-        optimized.prompt_embeds.shape[0] != count
+    if optimized.prompt_embeds.shape[0] != count:
+        raise ValueError("TPSO condition batch must match num_particles")
+    if sample.pooled is not None and (
+        optimized.pooled_embeds is None
         or optimized.pooled_embeds.shape[0] != count
     ):
-        raise ValueError("TPSO condition batch must match num_particles")
+        raise ValueError("TPSO pooled condition batch must match num_particles")
 
     clean_prompt = sample.prompt_embed.repeat(count, 1, 1)
-    clean_pooled = sample.pooled.repeat(count, 1)
+    clean_pooled = (
+        sample.pooled.repeat(count, 1)
+        if sample.pooled is not None
+        else None
+    )
     latents = sample.initial_latents.clone()
     alpha_trace = []
 
@@ -439,9 +467,11 @@ def run(
         prompt_t = clean_prompt + alpha * (
             optimized.prompt_embeds.to(clean_prompt.dtype) - clean_prompt
         )
-        pooled_t = clean_pooled + alpha * (
-            optimized.pooled_embeds.to(clean_pooled.dtype) - clean_pooled
-        )
+        pooled_t = None
+        if clean_pooled is not None:
+            pooled_t = clean_pooled + alpha * (
+                optimized.pooled_embeds.to(clean_pooled.dtype) - clean_pooled
+            )
         latents = ddim_step(
             pipe,
             latents,

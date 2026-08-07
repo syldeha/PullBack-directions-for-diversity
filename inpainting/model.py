@@ -1,4 +1,4 @@
-"""BrushNet SDXL loading, conditioning, and DDIM sampling utilities."""
+"""BrushNet SD1.5/SDXL loading, conditioning, and DDIM utilities."""
 
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -22,21 +22,33 @@ if str(BRUSHNET_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(BRUSHNET_ROOT / "src"))
 
 from diffusers import BrushNetModel, DDIMScheduler
+from diffusers.pipelines.brushnet.pipeline_brushnet import (
+    StableDiffusionBrushNetPipeline,
+)
 from diffusers.pipelines.brushnet.pipeline_brushnet_sd_xl import (
     StableDiffusionXLBrushNetPipeline,
 )
 
 
-BASE_MODEL = Path(
-    os.environ.get(
-        "BRUSHNET_BASE_MODEL",
-        BRUSHNET_ROOT / "checkpoints" / "JuggernautXL-v9",
-    )
+MODEL_FAMILY = os.environ.get("BRUSHNET_MODEL_FAMILY", "sd15").lower()
+if MODEL_FAMILY not in {"sd15", "sdxl"}:
+    raise ValueError("BRUSHNET_MODEL_FAMILY must be 'sd15' or 'sdxl'")
+
+DEFAULT_BASE_MODEL = (
+    "stable-diffusion-v1-5/stable-diffusion-v1-5"
+    if MODEL_FAMILY == "sd15"
+    else str(BRUSHNET_ROOT / "checkpoints" / "JuggernautXL-v9")
 )
+DEFAULT_BRUSHNET_MODEL = (
+    BRUSHNET_ROOT / "checkpoints" / "brushnet_segmentation_mask"
+    if MODEL_FAMILY == "sd15"
+    else BRUSHNET_ROOT / "checkpoints" / "brushnet_sdxl"
+)
+BASE_MODEL = os.environ.get("BRUSHNET_BASE_MODEL", DEFAULT_BASE_MODEL)
 BRUSHNET_MODEL = Path(
     os.environ.get(
         "BRUSHNET_MODEL",
-        BRUSHNET_ROOT / "checkpoints" / "brushnet_sdxl",
+        DEFAULT_BRUSHNET_MODEL,
     )
 )
 MODEL_DTYPE = torch.float16
@@ -69,29 +81,38 @@ class PreparedSample:
 def model_paths():
     """Resolve the external BrushNet checkout and checkpoint paths."""
     brushnet_root = Path(os.environ.get("BRUSHNET_ROOT", BRUSHNET_ROOT))
-    base_model = Path(
-        os.environ.get(
-            "BRUSHNET_BASE_MODEL",
-            brushnet_root / "checkpoints" / "JuggernautXL-v9",
-        )
+    default_base = (
+        "stable-diffusion-v1-5/stable-diffusion-v1-5"
+        if MODEL_FAMILY == "sd15"
+        else str(brushnet_root / "checkpoints" / "JuggernautXL-v9")
+    )
+    base_model = os.environ.get("BRUSHNET_BASE_MODEL", default_base)
+    default_brushnet = (
+        brushnet_root / "checkpoints" / "brushnet_segmentation_mask"
+        if MODEL_FAMILY == "sd15"
+        else brushnet_root / "checkpoints" / "brushnet_sdxl"
     )
     brushnet_model = Path(
         os.environ.get(
             "BRUSHNET_MODEL",
-            brushnet_root / "checkpoints" / "brushnet_sdxl",
+            default_brushnet,
         )
     )
     return brushnet_root, base_model, brushnet_model
 
 
 def load_pipeline():
-    """Load the local JuggernautXL and BrushNet checkpoints."""
+    """Load the configured SD1.5 or SDXL backbone and BrushNet checkpoint."""
     brushnet_root, base_model, brushnet_model = model_paths()
     required_files = [
         (brushnet_root / "src" / "diffusers" / "__init__.py", "BRUSHNET_ROOT"),
         (brushnet_model / "config.json", "BRUSHNET_MODEL"),
-        (base_model / "model_index.json", "BRUSHNET_BASE_MODEL"),
     ]
+    base_path = Path(base_model)
+    if base_path.exists() and not (base_path / "model_index.json").is_file():
+        required_files.append(
+            (base_path / "model_index.json", "BRUSHNET_BASE_MODEL")
+        )
     missing = [str(path) for path, _ in required_files if not path.is_file()]
     if missing:
         raise FileNotFoundError(
@@ -100,30 +121,47 @@ def load_pipeline():
             "module. Missing files: " + ", ".join(missing)
         )
 
+    brushnet_arguments = {
+        "torch_dtype": MODEL_DTYPE,
+        "use_safetensors": True,
+    }
+    if MODEL_FAMILY == "sd15":
+        brushnet_arguments["variant"] = "fp16"
     brushnet = BrushNetModel.from_pretrained(
         brushnet_model,
-        torch_dtype=MODEL_DTYPE,
-        use_safetensors=True,
+        **brushnet_arguments,
     )
-    pipe = StableDiffusionXLBrushNetPipeline.from_pretrained(
+
+    pipeline_class = (
+        StableDiffusionBrushNetPipeline
+        if MODEL_FAMILY == "sd15"
+        else StableDiffusionXLBrushNetPipeline
+    )
+    pipeline_arguments = {
+        "brushnet": brushnet,
+        "torch_dtype": MODEL_DTYPE,
+        "use_safetensors": True,
+        "low_cpu_mem_usage": True,
+        "local_files_only": True,
+    }
+    if MODEL_FAMILY == "sdxl":
+        pipeline_arguments["variant"] = "fp16"
+    else:
+        pipeline_arguments.update({
+            "safety_checker": None,
+            "requires_safety_checker": False,
+        })
+    pipe = pipeline_class.from_pretrained(
         base_model,
-        brushnet=brushnet,
-        torch_dtype=MODEL_DTYPE,
-        variant="fp16",
-        use_safetensors=True,
-        low_cpu_mem_usage=True,
-        local_files_only=True,
+        **pipeline_arguments,
     ).to("cuda")
     pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
     pipe.set_progress_bar_config(disable=True)
 
-    for module in (
-        pipe.vae,
-        pipe.text_encoder,
-        pipe.text_encoder_2,
-        pipe.unet,
-        pipe.brushnet,
-    ):
+    modules = [pipe.vae, pipe.text_encoder, pipe.unet, pipe.brushnet]
+    if MODEL_FAMILY == "sdxl":
+        modules.append(pipe.text_encoder_2)
+    for module in modules:
         module.eval()
         for parameter in module.parameters():
             parameter.requires_grad_(False)
@@ -202,19 +240,31 @@ def prepare_sample(
         edit_mask,
     )
 
-    prompt_embed, negative_embed, pooled, negative_pooled = pipe.encode_prompt(
-        prompt,
-        prompt,
-        device,
-        num_images_per_prompt=1,
-        do_classifier_free_guidance=True,
-        negative_prompt=NEGATIVE_PROMPT,
-    )
-    time_ids = torch.tensor(
-        [list((width, height) + (0, 0) + (width, height))],
-        dtype=prompt_embed.dtype,
-        device=device,
-    )
+    if MODEL_FAMILY == "sd15":
+        prompt_embed, negative_embed = pipe.encode_prompt(
+            prompt,
+            device,
+            num_images_per_prompt=1,
+            do_classifier_free_guidance=True,
+            negative_prompt=NEGATIVE_PROMPT,
+        )
+        pooled = None
+        negative_pooled = None
+        time_ids = None
+    else:
+        prompt_embed, negative_embed, pooled, negative_pooled = pipe.encode_prompt(
+            prompt,
+            prompt,
+            device,
+            num_images_per_prompt=1,
+            do_classifier_free_guidance=True,
+            negative_prompt=NEGATIVE_PROMPT,
+        )
+        time_ids = torch.tensor(
+            [list((width, height) + (0, 0) + (width, height))],
+            dtype=prompt_embed.dtype,
+            device=device,
+        )
 
     condition_latent = encode_image_latent(pipe, masked_source)
     mask_pixels = torch.from_numpy(
@@ -294,6 +344,16 @@ def prepare_sample(
 def repeat_condition(sample, count, classifier_free_guidance):
     condition = sample.brushnet_condition.repeat(count, 1, 1, 1)
     prompt = sample.prompt_embed.repeat(count, 1, 1)
+    if sample.pooled is None:
+        if not classifier_free_guidance:
+            return prompt, condition, None
+        negative = sample.negative_embed.repeat(count, 1, 1)
+        return (
+            torch.cat([negative, prompt]),
+            torch.cat([condition, condition]),
+            None,
+        )
+
     pooled = sample.pooled.repeat(count, 1)
     time_ids = sample.add_time_ids.repeat(count, 1)
     if not classifier_free_guidance:

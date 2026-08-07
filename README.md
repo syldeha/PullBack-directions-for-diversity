@@ -111,16 +111,28 @@ cd BrushNet
 python -m pip install -e .
 ```
 
-The audited implementation used upstream commit
-`0f9d9e54ca85c40a11a8f0504b4b5b2e7e8fd14d`, JuggernautXL-v9, and the
-BrushNet SDXL checkpoint. Point this repository to the external checkout and
-weights with:
+The inpainting runner supports SD1.5 and SDXL. The current BrushBench
+rho-star experiment uses Stable Diffusion 1.5 with the BrushNet segmentation
+mask checkpoint. Point this repository to the external BrushNet checkout and
+downloaded BrushBench data with:
 
 ```bash
 export BRUSHNET_ROOT=/path/to/BrushNet
-export BRUSHNET_BASE_MODEL=/path/to/JuggernautXL-v9
-export BRUSHNET_MODEL=/path/to/brushnet_sdxl
+export BRUSHNET_MODEL_FAMILY=sd15
 export BRUSHBENCH_ROOT=/path/to/BrushBench
+```
+
+By default, the SD1.5 base model is
+`stable-diffusion-v1-5/stable-diffusion-v1-5` and the BrushNet checkpoint is
+read from `$BRUSHNET_ROOT/checkpoints/brushnet_segmentation_mask`. Override
+them with `BRUSHNET_BASE_MODEL` and `BRUSHNET_MODEL` when needed.
+
+For the local setup used in this repository:
+
+```bash
+export BRUSHNET_ROOT="/home/dehay/Sylvain/Image_inpaiting pullback/BrushNet"
+export BRUSHBENCH_ROOT="/home/dehay/Sylvain/pullback-diffusion/download/BrushnetDataEval"
+export BRUSHNET_MODEL_FAMILY=sd15
 ```
 
 Follow the upstream BrushNet data and checkpoint licenses. They are not
@@ -175,8 +187,22 @@ for every requested `(rank, power_iterations)` pair.
 
 ## BrushNet Inpainting
 
-Edit `configs/inpainting.py` to select BrushBench examples, methods, and the
-`InpaintingConfig` parameters.
+The current configuration in `configs/inpainting.py` compares `clean_ddim`,
+`cads`, `tpso`, and `rho_star_pullback` on 500 BrushBench examples. Rho-star
+is the only pullback variant in this comparison; the fixed-magnitude adaptive
+variant is not run. It uses five independent initial particles, estimates
+mask-aware pullback directions, and selects a nonzero perturbation magnitude
+for each particle from
+`{0.10, 0.125, 0.15, 0.175, 0.20, 0.25}`. The rho-star probe maximizes
+pairwise DINO distance while allowing at most a `0.35` decrease from each
+particle's clean CLIP score.
+
+Edit `RUN_NAME`, `MAX_EXAMPLES`, and the `rho_star_*` fields in that file to
+start a different experiment. The comparison method list is:
+
+```python
+SELECTED_METHODS = ["rho_star_pullback", "clean_ddim", "cads", "tpso"]
+```
 
 Validate the configuration and local data:
 
@@ -196,10 +222,10 @@ Rebuild aggregate tables without loading the model:
 python -m experiments.inpainting --aggregate-only
 ```
 
-The published long-run configuration uses independent initial particles and
-the global pullback operator. Set
-`pullback_response_region="edit_mask"` only for a new regional-pullback run,
-and give that run a new `RUN_NAME`.
+The current configuration uses independent initial particles and
+`pullback_response_region="edit_mask"`. The response mask selects condition
+directions that are locally expressive inside the editable region. Final
+inpainting still restores the source pixels outside that region.
 
 ## Resume Behavior
 
@@ -251,4 +277,3 @@ metric definitions, seeds, and expected verification output.
   and shared across particles. It is not recomputed independently for every
   particle.
 - No model weights are trained or modified by these methods.
-

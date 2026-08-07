@@ -19,7 +19,7 @@ class InpaintingConfig:
     cads_rescale_factor: float = 1.0
     cads_condition_seed: int = 999
 
-    # Adaptive disjoint pullback without rho-star selection.
+    # Adaptive disjoint pullback.
     pullback_rank: int = 24
     pullback_basis_timestep: int = 500
     pullback_basis_seed: int = 515
@@ -35,7 +35,16 @@ class InpaintingConfig:
     pullback_intermediate_seed: int = 1515
     pullback_transition_steps: int = 2
     pullback_anchor_particle: int = 0
-    pullback_response_region: str = "global"
+    pullback_response_region: str = "edit_mask"  # "global" or "edit_mask"
+
+    # Particle-specific rho selection at one early Tweedie probe.
+    rho_star_probe_timestep: int = 699
+    rho_star_candidate_rhos: tuple = (0.10, 0.125, 0.15, 0.175, 0.20, 0.25)
+    rho_star_max_clip_drop: float = 0.35
+    rho_star_search_strategy: str = "beam"
+    rho_star_max_combinations: int = 5_000_000
+    rho_star_beam_width: int = 4096
+    rho_star_constraint_fallback: str = "minimum_selectable"
 
     # TPSO token optimization.
     tpso_kappa: float = 0.80
@@ -68,4 +77,30 @@ class InpaintingConfig:
             raise ValueError(
                 "pullback_response_region must be 'global' or 'edit_mask'"
             )
-
+        if not self.rho_star_candidate_rhos:
+            raise ValueError("rho_star_candidate_rhos cannot be empty")
+        if any(float(rho) <= 0.0 for rho in self.rho_star_candidate_rhos):
+            raise ValueError("rho-star candidate values must be positive")
+        if len(set(map(float, self.rho_star_candidate_rhos))) != len(
+            self.rho_star_candidate_rhos
+        ):
+            raise ValueError("rho-star candidate values must be unique")
+        if self.rho_star_max_clip_drop < 0.0:
+            raise ValueError("rho_star_max_clip_drop must be non-negative")
+        if self.rho_star_search_strategy not in {"auto", "exact", "beam"}:
+            raise ValueError(
+                "rho_star_search_strategy must be 'auto', 'exact', or 'beam'"
+            )
+        if self.rho_star_max_combinations < 1:
+            raise ValueError("rho_star_max_combinations must be positive")
+        if self.rho_star_beam_width < 1:
+            raise ValueError("rho_star_beam_width must be positive")
+        if self.rho_star_constraint_fallback not in {
+            "clean",
+            "minimum_selectable",
+            "error",
+        }:
+            raise ValueError(
+                "rho_star_constraint_fallback must be clean, "
+                "minimum_selectable, or error"
+            )

@@ -6,43 +6,36 @@ from inpainting.config import InpaintingConfig
 
 
 # Keep this name to resume. Change it when any scientific parameter changes.
-RUN_NAME = "brushbench_comparison_v1"
+RUN_NAME = "brushbench_rho_star_final"
 
 # Empty uses every locally available BrushBench image.
 EXAMPLE_KEYS = []
-MAX_EXAMPLES = 250
+MAX_EXAMPLES = 500
 EXAMPLE_ORDER_SEED = 3407
 
 SELECTED_METHODS = [
+    "rho_star_pullback",
     "clean_ddim",
     "cads",
-    "adaptive_pullback",
     "tpso",
 ]
 
 
-# These are the parameters from the audited long BrushBench comparison.
+# Rho-star pullback parameters for the BrushBench run.
 EXPERIMENT = InpaintingConfig(
-    num_particles=4,
-    resolution=1024,
+    num_particles=5,
+    resolution=512,
     ddim_steps=50,
     eta=0.0,
     initial_seed=4242,
     noise_seed_base=20800,
 
-    # Original CADS: fresh isotropic noise on both CFG branches.
-    cads_noise_scale=0.15,
-    cads_start=900,
-    cads_end=600,
-    cads_rescale_factor=1.0,
-    cads_condition_seed=999,
-
-    # Adaptive disjoint pullback, without rho-star selection.
-    pullback_rank=40,
+    # Regional adaptive disjoint pullback.
+    pullback_rank=30,
     pullback_basis_timestep=600,
     pullback_basis_seed=515,
     pullback_basis_iterations=2,
-    pullback_rho=1.25,
+    pullback_rho=0.15,
     pullback_start=999,
     pullback_end=500,
     pullback_schedule_power=2.0,
@@ -53,19 +46,17 @@ EXPERIMENT = InpaintingConfig(
     pullback_intermediate_seed=1515,
     pullback_transition_steps=2,
     pullback_anchor_particle=0,
-    pullback_response_region="global",
+    pullback_response_region="edit_mask",  # "global" or "edit_mask"
 
-    # TPSO token optimization and return-to-clean schedule.
-    tpso_kappa=0.80,
-    tpso_sigma=0.01,
-    tpso_diversity_weight=1.0,
-    tpso_learning_rate=1e-3,
-    tpso_max_steps=200,
-    tpso_min_steps=50,
-    tpso_patience=15,
-    tpso_initial_std=1e-4,
-    tpso_seed=3407,
-    tpso_ratio=0.4,
+    # Rho=0 is added automatically as the clean probe reference. It cannot be
+    # selected unless it is explicitly added to this candidate list.
+    rho_star_probe_timestep=699,
+    rho_star_candidate_rhos=(0.10, 0.125, 0.15, 0.175, 0.20, 0.25),
+    rho_star_max_clip_drop=0.35,
+    rho_star_search_strategy="beam",
+    rho_star_max_combinations=5_000_000,
+    rho_star_beam_width=4096,
+    rho_star_constraint_fallback="minimum_selectable",
 )
 
 

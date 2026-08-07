@@ -7,7 +7,7 @@ import json
 import numpy as np
 import torch
 
-from inpainting import cads, model, pullback, tpso
+from inpainting import cads, model, pullback, rho_star, tpso
 
 
 def prepare_example(pipe, example, config):
@@ -171,6 +171,25 @@ def run_adaptive_pullback(pipe, sample, basis, config, progress=True):
         transition_steps=config.pullback_transition_steps,
         anchor_particle=config.pullback_anchor_particle,
         response_region=config.pullback_response_region,
+        progress=progress,
+    )
+
+
+def run_rho_star_pullback(
+    pipe,
+    sample,
+    basis,
+    config,
+    metrics,
+    progress=True,
+):
+    """Select a mask-aware scale per particle and run adaptive pullback."""
+    return rho_star.run(
+        pipe,
+        sample,
+        basis,
+        config,
+        metrics,
         progress=progress,
     )
 

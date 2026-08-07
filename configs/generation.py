@@ -46,7 +46,7 @@ PULLBACK_MODE = "disjoint"
 PULLBACK_DIRECTION_SEED = 777
 PULLBACK_START = 999
 PULLBACK_END = 500
-PULLBACK_SCHEDULE_POWER = 2.0
+PULLBACK_SCHEDULE_POWER = 1.0
 
 # Adaptive intermediate Jacobian refreshes.
 PULLBACK_NUMBER_OF_REFRESHES = 2
@@ -92,7 +92,7 @@ TPSO_LOG_EVERY = 10
 
 # Keep RUN_NAME unchanged to resume. Change it whenever any configuration
 # value changes.
-RUN_NAME = "rho_star_rank_iteration_ablation_coco20_vtpso_final_1"
+RUN_NAME = "rho_star_rank_iteration_ablation_coco20_vtpso_final"
 OUTPUT_ROOT = ROOT / "outputs" / RUN_NAME
 BASIS_CACHE = OUTPUT_ROOT / "basis_cache"
 JPEG_QUALITY = 92
