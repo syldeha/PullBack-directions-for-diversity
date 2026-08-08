@@ -199,14 +199,31 @@ def closest_timestep_index(timesteps, timestep):
 
 
 def encode_image_latent(pipe, image):
+    """Encode an image into the VAE's latent space.
+
+    Some VAEs (e.g. the stock SDXL base VAE) overflow to NaN when run in
+    fp16 in either direction -- mirrors the upcast handling in
+    decode_latents.
+    """
     device = pipe._execution_device
+    needs_upcasting = (
+        pipe.vae.dtype == torch.float16 and pipe.vae.config.force_upcast
+    )
+    if needs_upcasting:
+        pipe.vae.to(dtype=torch.float32)
+
     pixels = pipe.image_processor.preprocess(
         image,
         height=image.height,
         width=image.width,
-    ).to(device, pipe.vae.dtype)
+    ).to(device, torch.float32 if needs_upcasting else pipe.vae.dtype)
     with torch.no_grad():
         latent = pipe.vae.encode(pixels).latent_dist.mode()
+
+    if needs_upcasting:
+        pipe.vae.to(dtype=MODEL_DTYPE)
+        latent = latent.to(MODEL_DTYPE)
+
     return latent * pipe.vae.config.scaling_factor
 
 

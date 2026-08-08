@@ -31,7 +31,7 @@ EXPERIMENT = InpaintingConfig(
     noise_seed_base=20800,
 
     # Regional adaptive disjoint pullback.
-    pullback_rank=30,
+    pullback_rank=40,
     pullback_basis_timestep=600,
     pullback_basis_seed=515,
     pullback_basis_iterations=2,
