@@ -691,12 +691,13 @@ def main():
 
                 prompt_results[method] = result
                 print_current_result(result)
-                completed_rows = collect_completed(output_root, keys, methods, n)
-                frame, summary = rebuild_tables(output_root, completed_rows)
-                print_aggregate(summary)
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+
+            completed_rows = collect_completed(output_root, keys, methods, n)
+            frame, summary = rebuild_tables(output_root, completed_rows)
+            print_aggregate(summary)
 
             grid_path = None
             if config_module.SAVE_COMPARISON_GRIDS:
