@@ -27,6 +27,95 @@ METHOD_LABELS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Reproducible comparison configuration
+# ---------------------------------------------------------------------------
+#
+# Keep every scientific parameter used by this compact comparison visible in
+# this block. Command-line arguments only override the example/prompt, number
+# of DDIM steps, number of particles, model paths, and output directory.
+
+DEFAULT_EXAMPLE_KEY = "000000089"
+DEFAULT_PROMPT = "A red fox standing in an autumn forest, photorealistic"
+NEGATIVE_PROMPT = ""
+DEFAULT_DDIM_STEPS = 10
+DEFAULT_NUM_PARTICLES = 4
+MINIMUM_DDIM_STEPS = 10
+MINIMUM_NUM_PARTICLES = 2
+
+# Rho magnitudes are model-family dependent. Rho=0 is added automatically as
+# the clean probe reference and is not part of the selectable candidate tuple.
+MODEL_SPECIFIC_PARAMETERS = {
+    "sd15": {
+        "rho_star_candidate_rhos": (0.05, 0.10, 0.15, 0.20, 0.25, 0.30),
+    },
+    "sdxl": {
+        "rho_star_candidate_rhos": (1.0, 1.25, 1.5, 1.75, 2.0, 2.5),
+    },
+}
+
+# Shared DDIM sampling parameters.
+GUIDANCE_SCALE = 7.5
+ETA = 0.0
+GENERATION_INITIAL_SEED = 12345
+INPAINTING_INITIAL_SEED = 4242
+NOISE_SEED_BASE = 20800
+UNET_PARTICLE_BATCH_SIZE = 1
+INPAINTING_COMPARISON_RESOLUTION_CAP = 512
+
+# Pullback basis, directions, and scheduled perturbation.
+PULLBACK_MINIMUM_RANK = 2
+PULLBACK_BASIS_TIMESTEP = 600
+PULLBACK_BASIS_SEED = 515
+PULLBACK_BASIS_ITERATIONS = 1
+PULLBACK_FINITE_DIFFERENCE_EPSILON = 0.5
+PULLBACK_MODE = "disjoint"
+PULLBACK_DIRECTION_SEED = 777
+PULLBACK_START = 999
+PULLBACK_END = 500
+PULLBACK_SCHEDULE_POWER = 2.0
+PULLBACK_NUMBER_OF_REFRESHES = 1
+PULLBACK_INTERMEDIATE_ITERATIONS = 1
+PULLBACK_INTERMEDIATE_SEED = 1515
+PULLBACK_TRANSITION_STEPS = 1
+PULLBACK_ANCHOR_PARTICLE = 0
+PULLBACK_RESPONSE_REGION = "edit_mask"
+
+# CLIP-constrained, DINO-diversity rho-star selection.
+RHO_STAR_PROBE_TIMESTEP = 699
+GENERATION_RHO_STAR_MAX_CLIP_DROP = 0.5
+INPAINTING_RHO_STAR_MAX_CLIP_DROP = 0.35
+RHO_STAR_SEARCH_STRATEGY = "exact"
+RHO_STAR_MAX_COMBINATIONS = 5_000_000
+RHO_STAR_BEAM_WIDTH = 4096
+RHO_STAR_CONSTRAINT_FALLBACK = "minimum_selectable"
+RHO_STAR_PROBE_DECODE_BATCH_SIZE = 2
+
+# CADS baseline.
+CADS_START = 900
+CADS_END = 600
+CADS_NOISE_SCALE = 0.15
+CADS_RESCALE_FACTOR = 1.0
+CADS_PSI = 1.0
+CADS_CONDITION_SEED = 999
+CADS_PERSISTENCE = "fresh"
+CADS_USE_RESCALE = True
+
+# TPSO baseline. These intentionally small optimization counts keep this
+# public comparison compact; the long paper configurations use larger values.
+TPSO_KAPPA = 0.80
+TPSO_SIGMA = 0.01
+TPSO_DIVERSITY_WEIGHT = 1.0
+TPSO_LEARNING_RATE = 1e-3
+TPSO_MAX_STEPS = 4
+TPSO_MIN_STEPS = 2
+TPSO_PATIENCE = 2
+TPSO_INITIALIZATION_STD = 1e-4
+TPSO_SEED = 3407
+TPSO_RATIO = 0.4
+TPSO_LOG_EVERY = 1
+
+
 def parse_methods(value):
     if value == "all":
         return list(METHODS)
@@ -157,17 +246,29 @@ def run_generation_comparison(profile, methods, prompt, steps, count):
         family=profile.family,
         local_files_only=True,
     )
-    model.set_unet_particle_batch_size(1)
-    positive, negative, real_tokens = model.encode_prompt(prompt, "")
-    initial = model.make_initial_latents(
-        count, profile.resolution, profile.resolution, seed=12345
+    model.set_unet_particle_batch_size(UNET_PARTICLE_BATCH_SIZE)
+    positive, negative, real_tokens = model.encode_prompt(
+        prompt, NEGATIVE_PROMPT
     )
-    rank = max(2, count)
+    initial = model.make_initial_latents(
+        count,
+        profile.resolution,
+        profile.resolution,
+        seed=GENERATION_INITIAL_SEED,
+    )
+    rank = max(PULLBACK_MINIMUM_RANK, count)
     basis = None
     selection = None
     if "rho_star" in methods:
         anchor, basis_timestep, _ = directions.compute_clean_anchor(
-            initial[:1], positive, negative, steps, 7.5, 0.0, 20800, 600
+            initial[:1],
+            positive,
+            negative,
+            steps,
+            GUIDANCE_SCALE,
+            ETA,
+            NOISE_SEED_BASE,
+            PULLBACK_BASIS_TIMESTEP,
         )
         basis, _ = pullback_basis.compute_pullback_basis(
             anchor,
@@ -175,17 +276,31 @@ def run_generation_comparison(profile, methods, prompt, steps, count):
             positive,
             real_tokens,
             rank=rank,
-            number_of_iterations=1,
-            seed=515,
-            finite_difference_epsilon=0.5,
+            number_of_iterations=PULLBACK_BASIS_ITERATIONS,
+            seed=PULLBACK_BASIS_SEED,
+            finite_difference_epsilon=PULLBACK_FINITE_DIFFERENCE_EPSILON,
             progress_label="comparison pullback basis",
         )
         probe_latents, probe_timestep, _ = directions.compute_clean_anchor(
-            initial, positive, negative, steps, 7.5, 0.0, 20800, 699
+            initial,
+            positive,
+            negative,
+            steps,
+            GUIDANCE_SCALE,
+            ETA,
+            NOISE_SEED_BASE,
+            RHO_STAR_PROBE_TIMESTEP,
         )
-        candidates = [0.10, 0.20] if profile.family == "sd15" else [1.0, 2.0]
+        candidates = MODEL_SPECIFIC_PARAMETERS[profile.family][
+            "rho_star_candidate_rhos"
+        ]
         full_directions = rho_star.make_full_scale_directions(
-            basis, positive, real_tokens, count, "disjoint", 777
+            basis,
+            positive,
+            real_tokens,
+            count,
+            PULLBACK_MODE,
+            PULLBACK_DIRECTION_SEED,
         )
         probe = rho_star.probe_rho_candidates(
             probe_latents,
@@ -194,22 +309,25 @@ def run_generation_comparison(profile, methods, prompt, steps, count):
             negative,
             real_tokens,
             full_directions,
-            [0.0] + candidates,
-            7.5,
-            schedule_start=999,
-            schedule_end=500,
-            schedule_power=2.0,
+            [0.0, *candidates],
+            GUIDANCE_SCALE,
+            schedule_start=PULLBACK_START,
+            schedule_end=PULLBACK_END,
+            schedule_power=PULLBACK_SCHEDULE_POWER,
         )
         metrics = PromptMetrics()
         probe = rho_star.add_clip_dino_probe_features(
-            probe, prompt, metrics, decode_batch_size=2
+            probe,
+            prompt,
+            metrics,
+            decode_batch_size=RHO_STAR_PROBE_DECODE_BATCH_SIZE,
         )
         selection = rho_star.select_rho_combination_clip_dino(
             probe,
-            max_clip_drop=0.5,
+            max_clip_drop=GENERATION_RHO_STAR_MAX_CLIP_DROP,
             selectable_rhos=candidates,
-            search_strategy="exact",
-            constraint_fallback="minimum_selectable",
+            search_strategy=RHO_STAR_SEARCH_STRATEGY,
+            constraint_fallback=RHO_STAR_CONSTRAINT_FALLBACK,
         )
         del metrics, probe, probe_latents, full_directions
         gc.collect()
@@ -220,7 +338,14 @@ def run_generation_comparison(profile, methods, prompt, steps, count):
         print(f"running {method}", flush=True)
         if method == "clean_ddim":
             latents = ddim.sample_clean_ddim(
-                initial, positive, negative, steps, 7.5, 0.0, 20800, progress=False
+                initial,
+                positive,
+                negative,
+                steps,
+                GUIDANCE_SCALE,
+                ETA,
+                NOISE_SEED_BASE,
+                progress=False,
             )
         elif method == "cads":
             latents = cads.sample_cads(
@@ -228,31 +353,31 @@ def run_generation_comparison(profile, methods, prompt, steps, count):
                 positive,
                 negative,
                 steps,
-                7.5,
-                0.0,
-                20800,
-                start=900,
-                end=600,
-                noise_scale=0.15,
-                psi=1.0,
-                noise_seed=999,
-                persistence="fresh",
-                use_rescale=True,
+                GUIDANCE_SCALE,
+                ETA,
+                NOISE_SEED_BASE,
+                start=CADS_START,
+                end=CADS_END,
+                noise_scale=CADS_NOISE_SCALE,
+                psi=CADS_PSI,
+                noise_seed=CADS_CONDITION_SEED,
+                persistence=CADS_PERSISTENCE,
+                use_rescale=CADS_USE_RESCALE,
                 progress=False,
             )
         elif method == "tpso":
             optimized = tpso.optimize_token_offsets(
                 prompt,
                 count,
-                kappa=0.80,
-                sigma=0.01,
-                diversity_weight=1.0,
-                learning_rate=1e-3,
-                max_steps=4,
-                min_steps=2,
-                patience=2,
-                seed=3407,
-                log_every=1,
+                kappa=TPSO_KAPPA,
+                sigma=TPSO_SIGMA,
+                diversity_weight=TPSO_DIVERSITY_WEIGHT,
+                learning_rate=TPSO_LEARNING_RATE,
+                max_steps=TPSO_MAX_STEPS,
+                min_steps=TPSO_MIN_STEPS,
+                patience=TPSO_PATIENCE,
+                seed=TPSO_SEED,
+                log_every=TPSO_LOG_EVERY,
             )
             latents, _ = tpso.sample_tpso(
                 initial,
@@ -260,10 +385,10 @@ def run_generation_comparison(profile, methods, prompt, steps, count):
                 negative,
                 optimized,
                 steps,
-                7.5,
-                0.0,
-                20800,
-                ratio=0.4,
+                GUIDANCE_SCALE,
+                ETA,
+                NOISE_SEED_BASE,
+                ratio=TPSO_RATIO,
                 progress=False,
             )
             del optimized
@@ -275,21 +400,21 @@ def run_generation_comparison(profile, methods, prompt, steps, count):
                 real_tokens,
                 basis,
                 steps,
-                7.5,
-                0.0,
-                20800,
+                GUIDANCE_SCALE,
+                ETA,
+                NOISE_SEED_BASE,
                 particle_rho=selection["selected_rhos"],
-                start=999,
-                end=500,
-                schedule_power=2.0,
-                mode="disjoint",
-                direction_seed=777,
-                number_of_refreshes=1,
+                start=PULLBACK_START,
+                end=PULLBACK_END,
+                schedule_power=PULLBACK_SCHEDULE_POWER,
+                mode=PULLBACK_MODE,
+                direction_seed=PULLBACK_DIRECTION_SEED,
+                number_of_refreshes=PULLBACK_NUMBER_OF_REFRESHES,
                 intermediate_rank=rank,
-                intermediate_iterations=1,
-                intermediate_seed=1515,
-                transition_steps=1,
-                finite_difference_epsilon=0.5,
+                intermediate_iterations=PULLBACK_INTERMEDIATE_ITERATIONS,
+                intermediate_seed=PULLBACK_INTERMEDIATE_SEED,
+                transition_steps=PULLBACK_TRANSITION_STEPS,
+                finite_difference_epsilon=PULLBACK_FINITE_DIFFERENCE_EPSILON,
                 progress=False,
             )
         else:
@@ -306,25 +431,59 @@ def run_inpainting_comparison(profile, methods, example_key, steps, count):
     from inpainting import data, experiment, model
     from inpainting.config import InpaintingConfig
 
-    rhos = (0.10, 0.20) if profile.family == "sd15" else (1.0, 2.0)
+    rhos = MODEL_SPECIFIC_PARAMETERS[profile.family][
+        "rho_star_candidate_rhos"
+    ]
+    rank = max(PULLBACK_MINIMUM_RANK, count)
     config = InpaintingConfig(
         num_particles=count,
-        resolution=min(profile.resolution, 512),
+        resolution=min(
+            profile.resolution, INPAINTING_COMPARISON_RESOLUTION_CAP
+        ),
         ddim_steps=steps,
-        pullback_rank=max(2, count),
-        pullback_basis_timestep=600,
-        pullback_basis_iterations=1,
+        eta=ETA,
+        initial_seed=INPAINTING_INITIAL_SEED,
+        noise_seed_base=NOISE_SEED_BASE,
+        cads_noise_scale=CADS_NOISE_SCALE,
+        cads_start=CADS_START,
+        cads_end=CADS_END,
+        cads_rescale_factor=CADS_RESCALE_FACTOR,
+        cads_condition_seed=CADS_CONDITION_SEED,
+        pullback_rank=rank,
+        pullback_basis_timestep=PULLBACK_BASIS_TIMESTEP,
+        pullback_basis_seed=PULLBACK_BASIS_SEED,
+        pullback_basis_iterations=PULLBACK_BASIS_ITERATIONS,
         pullback_rho=rhos[0],
-        pullback_refreshes=1,
-        pullback_intermediate_rank=max(2, count),
-        pullback_intermediate_iterations=1,
-        pullback_transition_steps=1,
+        pullback_start=PULLBACK_START,
+        pullback_end=PULLBACK_END,
+        pullback_schedule_power=PULLBACK_SCHEDULE_POWER,
+        pullback_direction_seed=PULLBACK_DIRECTION_SEED,
+        pullback_refreshes=PULLBACK_NUMBER_OF_REFRESHES,
+        pullback_intermediate_rank=rank,
+        pullback_intermediate_iterations=PULLBACK_INTERMEDIATE_ITERATIONS,
+        pullback_intermediate_seed=PULLBACK_INTERMEDIATE_SEED,
+        pullback_transition_steps=PULLBACK_TRANSITION_STEPS,
+        pullback_anchor_particle=PULLBACK_ANCHOR_PARTICLE,
+        pullback_response_region=PULLBACK_RESPONSE_REGION,
+        rho_star_probe_timestep=RHO_STAR_PROBE_TIMESTEP,
         rho_star_candidate_rhos=rhos,
-        rho_star_search_strategy="exact",
-        tpso_max_steps=4,
-        tpso_min_steps=2,
-        tpso_patience=2,
+        rho_star_max_clip_drop=INPAINTING_RHO_STAR_MAX_CLIP_DROP,
+        rho_star_search_strategy=RHO_STAR_SEARCH_STRATEGY,
+        rho_star_max_combinations=RHO_STAR_MAX_COMBINATIONS,
+        rho_star_beam_width=RHO_STAR_BEAM_WIDTH,
+        rho_star_constraint_fallback=RHO_STAR_CONSTRAINT_FALLBACK,
+        tpso_kappa=TPSO_KAPPA,
+        tpso_sigma=TPSO_SIGMA,
+        tpso_diversity_weight=TPSO_DIVERSITY_WEIGHT,
+        tpso_learning_rate=TPSO_LEARNING_RATE,
+        tpso_max_steps=TPSO_MAX_STEPS,
+        tpso_min_steps=TPSO_MIN_STEPS,
+        tpso_patience=TPSO_PATIENCE,
+        tpso_initial_std=TPSO_INITIALIZATION_STD,
+        tpso_seed=TPSO_SEED,
+        tpso_ratio=TPSO_RATIO,
     )
+    config.validate()
     pipe = model.load_pipeline()
     example = data.load_example(example_key)
     sample = experiment.prepare_example(pipe, example, config)
@@ -371,19 +530,26 @@ def main():
     parser.add_argument("--base-model")
     parser.add_argument("--brushnet-model")
     parser.add_argument("--brushbench-root")
-    parser.add_argument("--example", default="000000089")
+    parser.add_argument("--example", default=DEFAULT_EXAMPLE_KEY)
     parser.add_argument(
         "--prompt",
-        default="A red fox standing in an autumn forest, photorealistic",
+        default=DEFAULT_PROMPT,
     )
-    parser.add_argument("--steps", type=int, default=10)
-    parser.add_argument("--num-particles", type=int, default=4)
+    parser.add_argument("--steps", type=int, default=DEFAULT_DDIM_STEPS)
+    parser.add_argument(
+        "--num-particles", type=int, default=DEFAULT_NUM_PARTICLES
+    )
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
-    if args.steps < 10:
-        parser.error("--steps must be at least 10 so scheduled methods are exercised")
-    if args.num_particles < 2:
-        parser.error("--num-particles must be at least 2")
+    if args.steps < MINIMUM_DDIM_STEPS:
+        parser.error(
+            f"--steps must be at least {MINIMUM_DDIM_STEPS} so scheduled "
+            "methods are exercised"
+        )
+    if args.num_particles < MINIMUM_NUM_PARTICLES:
+        parser.error(
+            f"--num-particles must be at least {MINIMUM_NUM_PARTICLES}"
+        )
 
     profile = get_profile(
         args.profile,
