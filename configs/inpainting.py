@@ -51,7 +51,7 @@ EXPERIMENT = InpaintingConfig(
     # Rho=0 is added automatically as the clean probe reference. It cannot be
     # selected unless it is explicitly added to this candidate list.
     rho_star_probe_timestep=699,
-    rho_star_candidate_rhos=(1.0,1.25,1.5,1.75,2.0,2.5,3.0),
+    rho_star_candidate_rhos=(1.0,1.25,1.5,1.75,2.0,2.25),
     rho_star_max_clip_drop=0.35,
     rho_star_search_strategy="beam",
     rho_star_max_combinations=5_000_000,

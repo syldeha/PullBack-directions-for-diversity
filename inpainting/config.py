@@ -13,17 +13,17 @@ class InpaintingConfig:
     noise_seed_base: int = 20800
 
     # CADS paper baseline.
-    cads_noise_scale: float = 1.0
+    cads_noise_scale: float = 0.15
     cads_start: int = 900
     cads_end: int = 600
-    cads_rescale_factor: float = 0.5
+    cads_rescale_factor: float = 1.0
     cads_condition_seed: int = 999
 
     # Adaptive disjoint pullback.
-    pullback_rank: int = 24
+    pullback_rank: int = 30
     pullback_basis_timestep: int = 500
     pullback_basis_seed: int = 515
-    pullback_basis_iterations: int = 3
+    pullback_basis_iterations: int = 2
     pullback_rho: float = 1.25
     pullback_start: int = 999
     pullback_end: int = 500
@@ -56,7 +56,7 @@ class InpaintingConfig:
     tpso_patience: int = 15
     tpso_initial_std: float = 1e-4
     tpso_seed: int = 3407
-    tpso_ratio: float = 0.5
+    tpso_ratio: float = 0.4
 
     def validate(self):
         if self.num_particles < 2:
