@@ -1,0 +1,21 @@
+# Reproducible direct dependencies for the public environment.
+# Install the pinned BrushNet Diffusers fork separately, as documented in the
+# README; it intentionally replaces the public ``diffusers`` package.
+torch==2.13.0
+torchvision==0.28.0
+transformers==4.28.0
+huggingface-hub==0.25.2
+accelerate==1.14.0
+safetensors==0.8.0
+numpy==1.26.4
+pandas==2.3.3
+Pillow==12.3.0
+matplotlib==3.10.9
+tqdm==4.70.0
+timm==1.0.28
+lpips==0.1.4
+scipy==1.15.3
+wandb==0.28.1
+gdown==6.1.0
+ipykernel==6.31.0
+jupyterlab==4.6.2

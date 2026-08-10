@@ -1,4 +1,4 @@
-# Reproducibility And Verification
+# Reproducibility
 
 ## 1. Fair Comparison Contract
 
@@ -124,69 +124,7 @@ The inpainting runner also computes CLIP, DINO, MSS, and Vendi on a padded crop
 around the edit mask. Raw outside-mask MAE and PSNR are optional diagnostics;
 final blended outputs exactly restore the source outside the mask.
 
-## 5. Fast Validation
-
-Run the CPU-only tests from the repository root:
-
-```bash
-python -m tests.test_generation_math
-python -m tests.test_inpainting_math
-python -m tests.test_rho_star
-```
-
-Expected final lines:
-
-```text
-generation math tests passed
-inpainting math tests passed
-rho-star tests passed
-```
-
-Validate data and configurations without loading diffusion weights:
-
-```bash
-python -m experiments.generation --check
-python -m experiments.inpainting --check
-```
-
-Compile every Python module:
-
-```bash
-python -m compileall -q \
-  generation methods pullback inpainting evaluation experiments configs \
-  scripts tests
-```
-
-## 6. Reorganization Audit
-
-The public modules were extracted from the final research runners without
-changing equations, schedules, seed streams, branch handling, or defaults.
-Before cleanup, deterministic fake-model comparisons were run between the
-legacy and reorganized implementations.
-
-The generation audit checked exact equality for:
-
-- clean DDIM;
-- CADS with fresh and fixed condition noise;
-- adaptive pullback sampling;
-- pullback eigenvalues and dominant projector;
-- balanced snake assignment.
-
-The inpainting audit checked exact equality for:
-
-- global and regional matrix-free products;
-- block power and Rayleigh-Ritz extraction;
-- fixed ambient noise and disjoint projection;
-- adaptive refresh and interpolation;
-- CADS on both CFG branches with fresh and fixed noise;
-- DDIM algebra;
-- TPSO scheduling and condition interpolation.
-
-Both migration comparisons passed with exact tensor equality where the legacy
-implementation itself was deterministic. The permanent tests in `tests/` then
-replace legacy-path comparisons with self-contained known-answer checks.
-
-## 7. Known Limits
+## 5. Known Limits
 
 - CUDA kernels can introduce small cross-machine numerical differences even
   with fixed seeds.
@@ -199,4 +137,3 @@ replace legacy-path comparisons with self-contained known-answer checks.
   implemented but represents a separate experiment.
 - The two evaluators use different MSS/Vendi feature backbones, so their
   absolute values are not directly comparable.
-

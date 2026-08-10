@@ -6,7 +6,7 @@ shared within a caption.
 
 Edit ``configs/generation.py``, then run:
 
-    conda run --no-capture-output -n ppt \
+    conda run --no-capture-output -n pullback \
         python -u -m experiments.generation
 
 The run is resumable per (caption, method). Results and aggregate CSV files are

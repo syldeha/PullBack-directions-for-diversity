@@ -159,7 +159,22 @@ def experiment_identity(config_module, keys):
         "compute_raw_outside_preservation": bool(
             config_module.COMPUTE_RAW_OUTSIDE_PRESERVATION
         ),
+        "model": {
+            "family": model.MODEL_FAMILY,
+            "base_model": str(model.BASE_MODEL),
+            "brushnet_model": str(model.BRUSHNET_MODEL),
+        },
     }
+
+
+def is_model_identity_extension(previous, requested):
+    """Allow a legacy identity to gain model fields without changing science."""
+
+    if set(requested) - set(previous) != {"model"}:
+        return False
+    if not set(previous).issubset(requested):
+        return False
+    return all(requested[key] == value for key, value in previous.items())
 
 
 def prepare_output(config_module, identity):
@@ -170,10 +185,21 @@ def prepare_output(config_module, identity):
         with config_path.open() as handle:
             previous = json.load(handle)
         if previous != json_safe(identity):
-            raise RuntimeError(
-                f"Configuration changed for {output_root}. Change RUN_NAME to "
-                "start a new experiment, or restore the previous configuration."
-            )
+            if is_model_identity_extension(previous, json_safe(identity)):
+                backup = output_root / "config_before_model_identity.json"
+                if not backup.exists():
+                    write_json(backup, previous)
+                write_json(config_path, identity)
+                print(
+                    "Extended the legacy run identity with model family and "
+                    "checkpoint paths; completed methods remain reusable.",
+                    flush=True,
+                )
+            else:
+                raise RuntimeError(
+                    f"Configuration changed for {output_root}. Change RUN_NAME to "
+                    "start a new experiment, or restore the previous configuration."
+                )
     else:
         write_json(config_path, identity)
     return output_root

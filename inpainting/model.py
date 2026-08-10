@@ -10,6 +10,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageFilter
 
+from pullback.precision import require_finite, vae_precision
+
 
 # The upstream BrushNet checkout and model weights stay outside this repository.
 BRUSHNET_ROOT = Path(
@@ -37,7 +39,11 @@ if MODEL_FAMILY not in {"sd15", "sdxl"}:
 DEFAULT_BASE_MODEL = (
     "stable-diffusion-v1-5/stable-diffusion-v1-5"
     if MODEL_FAMILY == "sd15"
-    else str(BRUSHNET_ROOT / "checkpoints" / "JuggernautXL-v9")
+    else str(
+        BRUSHNET_ROOT
+        / "checkpoints"
+        / "stable-diffusion-xl-base-1.0"
+    )
 )
 DEFAULT_BRUSHNET_MODEL = (
     BRUSHNET_ROOT / "checkpoints" / "brushnet_segmentation_mask"
@@ -84,7 +90,11 @@ def model_paths():
     default_base = (
         "stable-diffusion-v1-5/stable-diffusion-v1-5"
         if MODEL_FAMILY == "sd15"
-        else str(brushnet_root / "checkpoints" / "JuggernautXL-v9")
+        else str(
+            brushnet_root
+            / "checkpoints"
+            / "stable-diffusion-xl-base-1.0"
+        )
     )
     base_model = os.environ.get("BRUSHNET_BASE_MODEL", default_base)
     default_brushnet = (
@@ -125,8 +135,6 @@ def load_pipeline():
         "torch_dtype": MODEL_DTYPE,
         "use_safetensors": True,
     }
-    if MODEL_FAMILY == "sd15":
-        brushnet_arguments["variant"] = "fp16"
     brushnet = BrushNetModel.from_pretrained(
         brushnet_model,
         **brushnet_arguments,
@@ -148,6 +156,7 @@ def load_pipeline():
         pipeline_arguments["variant"] = "fp16"
     else:
         pipeline_arguments.update({
+            "feature_extractor": None,
             "safety_checker": None,
             "requires_safety_checker": False,
         })
@@ -206,25 +215,21 @@ def encode_image_latent(pipe, image):
     decode_latents.
     """
     device = pipe._execution_device
-    needs_upcasting = (
-        pipe.vae.dtype == torch.float16 and pipe.vae.config.force_upcast
-    )
-    if needs_upcasting:
-        pipe.vae.to(dtype=torch.float32)
+    with vae_precision(pipe.vae) as execution_dtype:
+        pixels = pipe.image_processor.preprocess(
+            image,
+            height=image.height,
+            width=image.width,
+        ).to(device, execution_dtype)
+        require_finite("VAE encode input pixels", pixels)
+        with torch.no_grad():
+            latent = pipe.vae.encode(pixels).latent_dist.mode()
+        require_finite("VAE encoded latent", latent)
 
-    pixels = pipe.image_processor.preprocess(
-        image,
-        height=image.height,
-        width=image.width,
-    ).to(device, torch.float32 if needs_upcasting else pipe.vae.dtype)
-    with torch.no_grad():
-        latent = pipe.vae.encode(pixels).latent_dist.mode()
-
-    if needs_upcasting:
-        pipe.vae.to(dtype=MODEL_DTYPE)
-        latent = latent.to(MODEL_DTYPE)
-
-    return latent * pipe.vae.config.scaling_factor
+    latent = latent.to(MODEL_DTYPE)
+    latent = latent * pipe.vae.config.scaling_factor
+    require_finite("scaled VAE encoded latent", latent)
+    return latent
 
 
 def prepare_sample(
@@ -594,30 +599,27 @@ def decode_latents(pipe, latents):
     decode correctly -- mirrors diffusers' own SDXL pipeline handling.
     """
 
-    needs_upcasting = (
-        pipe.vae.dtype == torch.float16 and pipe.vae.config.force_upcast
-    )
-    if needs_upcasting:
-        pipe.vae.to(dtype=torch.float32)
-
+    require_finite("VAE decode input latents", latents)
     images = []
-    with torch.no_grad():
-        for particle in range(latents.shape[0]):
-            particle_latents = latents[particle:particle + 1]
-            if needs_upcasting:
-                particle_latents = particle_latents.float()
-            decoded = pipe.vae.decode(
-                particle_latents / pipe.vae.config.scaling_factor,
-                return_dict=False,
-            )[0]
-            images.extend(
-                pipe.image_processor.postprocess(decoded, output_type="pil")
-            )
+    with vae_precision(pipe.vae) as execution_dtype:
+        with torch.no_grad():
+            for particle in range(latents.shape[0]):
+                particle_latents = latents[
+                    particle:particle + 1
+                ].to(dtype=execution_dtype)
+                decoded = pipe.vae.decode(
+                    particle_latents / pipe.vae.config.scaling_factor,
+                    return_dict=False,
+                )[0]
+                require_finite("VAE decoded pixels", decoded)
+                images.extend(
+                    pipe.image_processor.postprocess(
+                        decoded, output_type="pil"
+                    )
+                )
 
-    if needs_upcasting:
-        pipe.vae.to(dtype=MODEL_DTYPE)
-
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     return images
 
 

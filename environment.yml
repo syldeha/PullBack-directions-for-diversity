@@ -1,0 +1,10 @@
+name: pullback
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - git
+  - pip:
+      - -r requirements-lock.txt
+

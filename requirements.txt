@@ -1,7 +1,9 @@
 # Shared generation and evaluation dependencies.
+# Diffusers is intentionally absent: install the pinned TencentARC/BrushNet
+# checkout documented in the README.  That fork is required by inpainting and
+# is also the Diffusers build used for the generation experiments.
 torch>=2.1
 torchvision>=0.16
-diffusers>=0.27
 transformers==4.28.0
 huggingface-hub==0.25.2
 accelerate>=0.31
@@ -14,4 +16,5 @@ tqdm>=4.66
 timm>=1.0
 lpips>=0.1.4
 wandb>=0.17
-
+scipy>=1.10
+gdown>=5.1

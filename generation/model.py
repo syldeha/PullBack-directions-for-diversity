@@ -4,6 +4,8 @@ import numpy as np
 import torch
 from PIL import Image
 
+from pullback.precision import require_finite, vae_precision
+
 
 # Model components are loaded once and shared by the sampling methods.
 pipe = None
@@ -21,7 +23,7 @@ unet_particle_batch_size = None
 # Set by load_model(); "sd15" or "sdxl". SDXL also needs pooled_positive,
 # pooled_negative (set by encode_prompt) and add_time_ids_tensor (set by
 # make_initial_latents) before predict_epsilon_cfg can run.
-model_family = "sdxl"
+model_family = "sd15"
 pooled_positive = None
 pooled_negative = None
 add_time_ids_tensor = None
@@ -29,7 +31,7 @@ add_time_ids_tensor = None
 
 def load_model(
     model_id="stable-diffusion-v1-5/stable-diffusion-v1-5",
-    family="sdxl",
+    family="sd15",
     local_files_only=True,
 ):
     """Load Stable Diffusion 1.5 or SDXL with a DDIM scheduler."""
@@ -61,6 +63,7 @@ def load_model(
             model_id,
             torch_dtype=model_dtype,
             local_files_only=local_files_only,
+            feature_extractor=None,
             safety_checker=None,
             requires_safety_checker=False,
         ).to(device)
@@ -274,18 +277,14 @@ def decode_latents(latents):
     decode correctly -- mirrors diffusers' own SDXL pipeline handling.
     """
 
-    needs_upcasting = (
-        vae.dtype == torch.float16 and vae.config.force_upcast
-    )
-    if needs_upcasting:
-        vae.to(dtype=torch.float32)
-        latents = latents.float()
-
-    with torch.no_grad():
-        decoded = vae.decode(latents / vae.config.scaling_factor).sample
-
-    if needs_upcasting:
-        vae.to(dtype=model_dtype)
+    require_finite("VAE decode input latents", latents)
+    with vae_precision(vae) as execution_dtype:
+        decode_input = latents.to(dtype=execution_dtype)
+        with torch.no_grad():
+            decoded = vae.decode(
+                decode_input / vae.config.scaling_factor
+            ).sample
+        require_finite("VAE decoded pixels", decoded)
 
     images = (decoded.float() / 2.0 + 0.5).clamp(0.0, 1.0)
     images = images.permute(0, 2, 3, 1).cpu().numpy()
